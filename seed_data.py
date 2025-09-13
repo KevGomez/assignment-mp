@@ -1,9 +1,8 @@
 import csv
 import os
-from sqlalchemy.orm import Session
-from app.database import SessionLocal, engine
-from app.models import Product, User, Base
-from app.auth import get_password_hash
+from app.database import SessionLocal, engine, Base
+from app.models import Product, User
+from app.utils.auth_utils import get_password_hash
 
 def load_products_from_csv():
     Base.metadata.create_all(bind=engine)
@@ -33,15 +32,15 @@ def load_products_from_csv():
                     
                     # Check if product with this SKU or slug already exists
                     existing_product = db.query(Product).filter(
-                        (Product.sku == sku.strip()) | (Product.slug == slug.strip())
+                        (Product.product_sku == int(sku.strip())) | (Product.product_slug == slug.strip())
                     ).first()
                     if not existing_product:
                         product = Product(
-                            sku=sku.strip(),
-                            brand=brand.strip(),
-                            slug=slug.strip(),
-                            name=title.strip(),
-                            stock=int(quantity)
+                            product_sku=int(sku.strip()),
+                            brand_name=brand.strip(),
+                            product_slug=slug.strip(),
+                            product_title=title.strip(),
+                            quantity=int(quantity)
                         )
                         db.add(product)
                         print(f"Added product: {title.strip()} (SKU: {sku})")

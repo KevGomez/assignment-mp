@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from .database import engine, Base
-from .routers import products, auth
+from .routers.v1 import products, auth
 import uvicorn
 
 Base.metadata.create_all(bind=engine)

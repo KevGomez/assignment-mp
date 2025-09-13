@@ -5,12 +5,12 @@ from passlib.context import CryptContext
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from sqlalchemy.orm import Session
-from . import models, schemas
-from .database import get_db
+from ..models.user import User
+from ..database import get_db
 
 SECRET_KEY = "your-secret-key-change-this-in-production"
 ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_MINUTES = 30
+ACCESS_TOKEN_EXPIRE_MINUTES = 60
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 security = HTTPBearer()
@@ -22,7 +22,7 @@ def get_password_hash(password):
     return pwd_context.hash(password)
 
 def get_user(db: Session, username: str):
-    return db.query(models.User).filter(models.User.username == username).first()
+    return db.query(User).filter(User.username == username).first()
 
 def authenticate_user(db: Session, username: str, password: str):
     user = get_user(db, username)
@@ -46,6 +46,7 @@ def get_current_user(
     credentials: HTTPAuthorizationCredentials = Depends(security),
     db: Session = Depends(get_db)
 ):
+    from ..utils.auth_schemas import TokenData
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Could not validate credentials",
@@ -57,7 +58,7 @@ def get_current_user(
         username: str = payload.get("sub")
         if username is None:
             raise credentials_exception
-        token_data = schemas.TokenData(username=username)
+        token_data = TokenData(username=username)
     except JWTError:
         raise credentials_exception
     user = get_user(db, username=token_data.username)
