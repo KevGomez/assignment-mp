@@ -1,4 +1,4 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 from typing import Optional
 
 class ProductBase(BaseModel):
@@ -24,8 +24,7 @@ class ProductUpdate(BaseModel):
 class Product(ProductBase):
     product_id: int
     
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 class ProductListItem(BaseModel):
     """Product list item with only required fields for listing"""
@@ -35,8 +34,7 @@ class ProductListItem(BaseModel):
     brand_name: str
     product_slug: str
     
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 class ProductResponse(BaseModel):
     message: str

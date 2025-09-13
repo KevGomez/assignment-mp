@@ -44,7 +44,7 @@ def get_products_count(db: Session, brand: Optional[str] = None, search: Optiona
     return query.scalar()
 
 def create_product(db: Session, product: ProductCreate):
-    db_product = Product(**product.dict())
+    db_product = Product(**product.model_dump())
     db.add(db_product)
     db.commit()
     db.refresh(db_product)
@@ -53,7 +53,7 @@ def create_product(db: Session, product: ProductCreate):
 def update_product(db: Session, product_id: int, product_update: ProductUpdate):
     db_product = db.query(Product).filter(Product.product_id == product_id).first()
     if db_product:
-        update_data = product_update.dict(exclude_unset=True)
+        update_data = product_update.model_dump(exclude_unset=True)
         for field, value in update_data.items():
             setattr(db_product, field, value)
         db.commit()

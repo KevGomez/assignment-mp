@@ -4,7 +4,9 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from app.main import app
 from app.database import get_db, Base
-from app.models import Product
+from app.models.product import Product
+from app.models.user import User
+from app.utils.auth_utils import get_password_hash
 
 SQLALCHEMY_DATABASE_URL = "sqlite:///./test.db"
 
@@ -21,173 +23,349 @@ def override_get_db():
         db.close()
 
 app.dependency_overrides[get_db] = override_get_db
-
 client = TestClient(app)
 
 @pytest.fixture(scope="function")
 def setup_database():
     Base.metadata.create_all(bind=engine)
+    
+    # Create test admin user
+    db = TestingSessionLocal()
+    admin_user = User(
+        username="testadmin",
+        hashed_password=get_password_hash("testpass123")
+    )
+    db.add(admin_user)
+    db.commit()
+    db.close()
+    
     yield
     Base.metadata.drop_all(bind=engine)
 
 @pytest.fixture
+def auth_headers(setup_database):
+    """Get JWT token for authenticated requests"""
+    login_data = {
+        "username": "testadmin",
+        "password": "testpass123"
+    }
+    response = client.post("/api/v1/auth/token", json=login_data)
+    token = response.json()["access_token"]
+    return {"Authorization": f"Bearer {token}"}
+
+@pytest.fixture
 def sample_product_data():
     return {
-        "brand": "TestBrand",
-        "slug": "test-product-slug",
-        "name": "Test Product",
-        "stock": 50
+        "product_sku": 12345,
+        "brand_name": "Tommy",
+        "product_title": "High split shirt",
+        "quantity": 50
     }
 
-def test_read_root():
-    response = client.get("/")
-    assert response.status_code == 200
-    data = response.json()
-    assert "message" in data
-    assert "version" in data
-
-def test_health_check():
-    response = client.get("/health")
-    assert response.status_code == 200
-    data = response.json()
-    assert data["status"] == "healthy"
-
-def test_create_product(setup_database, sample_product_data):
-    response = client.post("/api/v1/products/", json=sample_product_data)
-    assert response.status_code == 201
-    data = response.json()
-    assert data["message"] == "Product created successfully"
-    assert data["product"]["brand"] == sample_product_data["brand"]
-    assert data["product"]["slug"] == sample_product_data["slug"]
-
-def test_create_duplicate_product(setup_database, sample_product_data):
-    client.post("/api/v1/products/", json=sample_product_data)
-    response = client.post("/api/v1/products/", json=sample_product_data)
-    assert response.status_code == 400
-    assert "already exists" in response.json()["detail"]
-
-def test_read_products(setup_database, sample_product_data):
-    client.post("/api/v1/products/", json=sample_product_data)
-    response = client.get("/api/v1/products/")
-    assert response.status_code == 200
-    data = response.json()
-    assert data["message"] == "Products retrieved successfully"
-    assert len(data["products"]) == 1
-    assert data["total"] == 1
-
-def test_read_product_by_id(setup_database, sample_product_data):
-    create_response = client.post("/api/v1/products/", json=sample_product_data)
-    product_id = create_response.json()["product"]["id"]
-    
-    response = client.get(f"/api/v1/products/{product_id}")
-    assert response.status_code == 200
-    data = response.json()
-    assert data["product"]["id"] == product_id
-
-def test_read_product_by_slug(setup_database, sample_product_data):
-    client.post("/api/v1/products/", json=sample_product_data)
-    
-    response = client.get(f"/api/v1/products/slug/{sample_product_data['slug']}")
-    assert response.status_code == 200
-    data = response.json()
-    assert data["product"]["slug"] == sample_product_data["slug"]
-
-def test_read_nonexistent_product(setup_database):
-    response = client.get("/api/v1/products/999")
-    assert response.status_code == 404
-    assert "not found" in response.json()["detail"]
-
-def test_update_product(setup_database, sample_product_data):
-    create_response = client.post("/api/v1/products/", json=sample_product_data)
-    product_id = create_response.json()["product"]["id"]
-    
-    update_data = {"name": "Updated Product Name", "stock": 75}
-    response = client.put(f"/api/v1/products/{product_id}", json=update_data)
-    assert response.status_code == 200
-    data = response.json()
-    assert data["product"]["name"] == "Updated Product Name"
-    assert data["product"]["stock"] == 75
-
-def test_delete_product(setup_database, sample_product_data):
-    create_response = client.post("/api/v1/products/", json=sample_product_data)
-    product_id = create_response.json()["product"]["id"]
-    
-    response = client.delete(f"/api/v1/products/{product_id}")
-    assert response.status_code == 200
-    
-    get_response = client.get(f"/api/v1/products/{product_id}")
-    assert get_response.status_code == 404
-
-def test_get_low_stock_products(setup_database):
-    low_stock_product = {
-        "brand": "TestBrand",
-        "slug": "low-stock-product",
-        "name": "Low Stock Product",
-        "stock": 5
-    }
-    high_stock_product = {
-        "brand": "TestBrand",
-        "slug": "high-stock-product",
-        "name": "High Stock Product",
-        "stock": 50
-    }
-    
-    client.post("/api/v1/products/", json=low_stock_product)
-    client.post("/api/v1/products/", json=high_stock_product)
-    
-    response = client.get("/api/v1/products/stock/low?threshold=10")
-    assert response.status_code == 200
-    data = response.json()
-    assert len(data["products"]) == 1
-    assert data["products"][0]["stock"] <= 10
-
-def test_update_product_stock(setup_database, sample_product_data):
-    create_response = client.post("/api/v1/products/", json=sample_product_data)
-    product_id = create_response.json()["product"]["id"]
-    
-    response = client.patch(f"/api/v1/products/{product_id}/stock?stock=100")
-    assert response.status_code == 200
-    data = response.json()
-    assert data["product"]["stock"] == 100
-
-def test_search_products(setup_database):
-    products = [
-        {"brand": "Nike", "slug": "nike-shirt", "name": "Nike Shirt", "stock": 10},
-        {"brand": "Adidas", "slug": "adidas-shoes", "name": "Adidas Shoes", "stock": 20},
-        {"brand": "Nike", "slug": "nike-pants", "name": "Nike Pants", "stock": 15}
-    ]
-    
-    for product in products:
-        client.post("/api/v1/products/", json=product)
-    
-    response = client.get("/api/v1/products/?brand=Nike")
-    assert response.status_code == 200
-    data = response.json()
-    assert len(data["products"]) == 2
-    
-    response = client.get("/api/v1/products/?search=shoes")
-    assert response.status_code == 200
-    data = response.json()
-    assert len(data["products"]) == 1
-    assert "shoes" in data["products"][0]["name"].lower()
-
-def test_pagination(setup_database):
-    for i in range(15):
-        product_data = {
-            "brand": f"Brand{i}",
-            "slug": f"product-{i}",
-            "name": f"Product {i}",
-            "stock": i * 10
+class TestAuthentication:
+    def test_register_user(self, setup_database):
+        user_data = {
+            "username": "newuser",
+            "password": "newpass123"
         }
-        client.post("/api/v1/products/", json=product_data)
-    
-    response = client.get("/api/v1/products/?skip=0&limit=10")
-    assert response.status_code == 200
-    data = response.json()
-    assert len(data["products"]) == 10
-    assert data["total"] == 15
-    
-    response = client.get("/api/v1/products/?skip=10&limit=10")
-    assert response.status_code == 200
-    data = response.json()
-    assert len(data["products"]) == 5
+        response = client.post("/api/v1/auth/register", json=user_data)
+        assert response.status_code == 200
+        data = response.json()
+        assert data["username"] == "newuser"
+        assert "id" in data
+
+    def test_login_user(self, setup_database):
+        login_data = {
+            "username": "testadmin",
+            "password": "testpass123"
+        }
+        response = client.post("/api/v1/auth/token", json=login_data)
+        assert response.status_code == 200
+        data = response.json()
+        assert "access_token" in data
+        assert data["token_type"] == "bearer"
+
+    def test_login_invalid_credentials(self, setup_database):
+        login_data = {
+            "username": "testadmin",
+            "password": "wrongpassword"
+        }
+        response = client.post("/api/v1/auth/token", json=login_data)
+        assert response.status_code == 401
+
+class TestProductAPI:
+    def test_create_product(self, auth_headers, sample_product_data):
+        response = client.post("/api/v1/products/", json=sample_product_data, headers=auth_headers)
+        assert response.status_code == 201
+        data = response.json()
+        assert data["product_sku"] == 12345
+        assert data["brand_name"] == "Tommy"
+        assert data["product_title"] == "High split shirt"
+        assert data["product_slug"] == "high-split-solid-shirt"  # Tommy brand rule
+        assert data["quantity"] == 50
+        assert "product_id" in data
+
+    def test_create_product_duplicate_sku(self, auth_headers, sample_product_data):
+        # Create first product
+        client.post("/api/v1/products/", json=sample_product_data, headers=auth_headers)
+        
+        # Try to create with same SKU
+        duplicate_data = sample_product_data.copy()
+        duplicate_data["product_title"] = "Different title"
+        response = client.post("/api/v1/products/", json=duplicate_data, headers=auth_headers)
+        assert response.status_code == 400
+        assert "Product with this SKU already exists" in response.json()["detail"]
+
+    def test_create_product_duplicate_brand_title(self, auth_headers, sample_product_data):
+        # Create first product
+        client.post("/api/v1/products/", json=sample_product_data, headers=auth_headers)
+        
+        # Try to create with same brand + title but different SKU
+        duplicate_data = sample_product_data.copy()
+        duplicate_data["product_sku"] = 99999
+        response = client.post("/api/v1/products/", json=duplicate_data, headers=auth_headers)
+        assert response.status_code == 400
+        assert "already exists for brand" in response.json()["detail"]
+
+    def test_create_product_same_title_different_brand(self, auth_headers, sample_product_data):
+        # Create first product
+        client.post("/api/v1/products/", json=sample_product_data, headers=auth_headers)
+        
+        # Create with same title but different brand (should be allowed)
+        different_brand_data = {
+            "product_sku": 99999,
+            "brand_name": "Shein",
+            "product_title": "High split shirt",
+            "quantity": 25
+        }
+        response = client.post("/api/v1/products/", json=different_brand_data, headers=auth_headers)
+        assert response.status_code == 201
+
+    def test_list_products_default(self, auth_headers, sample_product_data):
+        # Create a product first
+        client.post("/api/v1/products/", json=sample_product_data, headers=auth_headers)
+        
+        response = client.get("/api/v1/products/", headers=auth_headers)
+        assert response.status_code == 200
+        data = response.json()
+        assert isinstance(data, list)
+        assert len(data) == 1
+        
+        product = data[0]
+        assert "product_id" in product
+        assert "product_sku" in product
+        assert "product_title" in product
+        assert "brand_name" in product
+        assert "product_slug" in product
+        # List response should NOT include quantity
+
+    def test_list_products_with_pagination(self, auth_headers):
+        # Create multiple products
+        for i in range(15):
+            product_data = {
+                "product_sku": 10000 + i,
+                "brand_name": "Tommy",
+                "product_title": f"Test product {i}",
+                "quantity": 10
+            }
+            client.post("/api/v1/products/", json=product_data, headers=auth_headers)
+        
+        # Test default limit (10)
+        response = client.get("/api/v1/products/", headers=auth_headers)
+        assert response.status_code == 200
+        data = response.json()
+        assert len(data) == 10
+        
+        # Test custom limit
+        response = client.get("/api/v1/products/?limit=5", headers=auth_headers)
+        assert response.status_code == 200
+        data = response.json()
+        assert len(data) == 5
+        
+        # Test skip
+        response = client.get("/api/v1/products/?skip=10&limit=5", headers=auth_headers)
+        assert response.status_code == 200
+        data = response.json()
+        assert len(data) == 5
+
+    def test_list_products_brand_filter(self, auth_headers):
+        # Create products with different brands
+        tommy_product = {
+            "product_sku": 11111,
+            "brand_name": "Tommy",
+            "product_title": "Tommy shirt",
+            "quantity": 10
+        }
+        shein_product = {
+            "product_sku": 22222,
+            "brand_name": "Shein",
+            "product_title": "Shein dress",
+            "quantity": 15
+        }
+        
+        client.post("/api/v1/products/", json=tommy_product, headers=auth_headers)
+        client.post("/api/v1/products/", json=shein_product, headers=auth_headers)
+        
+        # Filter by Tommy
+        response = client.get("/api/v1/products/?brand=Tommy", headers=auth_headers)
+        assert response.status_code == 200
+        data = response.json()
+        assert len(data) == 1
+        assert data[0]["brand_name"] == "Tommy"
+        
+        # Filter by Shein (case-insensitive)
+        response = client.get("/api/v1/products/?brand=shein", headers=auth_headers)
+        assert response.status_code == 200
+        data = response.json()
+        assert len(data) == 1
+        assert data[0]["brand_name"] == "Shein"
+
+    def test_get_single_product(self, auth_headers, sample_product_data):
+        # Create product first
+        create_response = client.post("/api/v1/products/", json=sample_product_data, headers=auth_headers)
+        product_id = create_response.json()["product_id"]
+        
+        # Get single product
+        response = client.get(f"/api/v1/products/{product_id}", headers=auth_headers)
+        assert response.status_code == 200
+        data = response.json()
+        
+        # Should include ALL fields
+        assert data["product_id"] == product_id
+        assert data["product_sku"] == 12345
+        assert data["brand_name"] == "Tommy"
+        assert data["product_title"] == "High split shirt"
+        assert data["product_slug"] == "high-split-solid-shirt"
+        assert data["quantity"] == 50
+
+    def test_get_nonexistent_product(self, auth_headers):
+        response = client.get("/api/v1/products/99999", headers=auth_headers)
+        assert response.status_code == 404
+
+    def test_delete_product(self, auth_headers, sample_product_data):
+        # Create product first
+        create_response = client.post("/api/v1/products/", json=sample_product_data, headers=auth_headers)
+        product_id = create_response.json()["product_id"]
+        
+        # Delete product
+        response = client.delete(f"/api/v1/products/{product_id}", headers=auth_headers)
+        assert response.status_code == 204
+        
+        # Verify product is deleted (should return 404)
+        response = client.get(f"/api/v1/products/{product_id}", headers=auth_headers)
+        assert response.status_code == 404
+
+    def test_delete_nonexistent_product(self, auth_headers):
+        response = client.delete("/api/v1/products/99999", headers=auth_headers)
+        assert response.status_code == 404
+
+class TestSlugGeneration:
+    def test_tommy_brand_slug_generation(self, auth_headers):
+        # Test Tommy 3-token rule
+        product_data = {
+            "product_sku": 30001,
+            "brand_name": "Tommy",
+            "product_title": "High split shirt",  # 3 tokens
+            "quantity": 10
+        }
+        response = client.post("/api/v1/products/", json=product_data, headers=auth_headers)
+        assert response.status_code == 201
+        assert response.json()["product_slug"] == "high-split-solid-shirt"
+        
+        # Test Tommy 4-token rule
+        product_data = {
+            "product_sku": 30002,
+            "brand_name": "Tommy",
+            "product_title": "Tall stripped black shirt",  # 4 tokens
+            "quantity": 10
+        }
+        response = client.post("/api/v1/products/", json=product_data, headers=auth_headers)
+        assert response.status_code == 201
+        assert response.json()["product_slug"] == "tall-stripped-black-shirt"
+
+    def test_shein_brand_slug_generation(self, auth_headers):
+        # Test Shein shirt rule
+        product_data = {
+            "product_sku": 30003,
+            "brand_name": "Shein",
+            "product_title": "Tall buttoned black shirt",
+            "quantity": 10
+        }
+        response = client.post("/api/v1/products/", json=product_data, headers=auth_headers)
+        assert response.status_code == 201
+        assert response.json()["product_slug"] == "tall-buttoned-curved-black"
+        
+        # Test Shein dress rule (no change)
+        product_data = {
+            "product_sku": 30004,
+            "brand_name": "Shein",
+            "product_title": "Solid split red dress",
+            "quantity": 10
+        }
+        response = client.post("/api/v1/products/", json=product_data, headers=auth_headers)
+        assert response.status_code == 201
+        assert response.json()["product_slug"] == "solid-split-red-dress"
+
+    def test_reiss_brand_slug_generation(self, auth_headers):
+        # Test Reiss shirt removal
+        product_data = {
+            "product_sku": 30005,
+            "brand_name": "Reiss",
+            "product_title": "Roll up sleeve black shirt",
+            "quantity": 10
+        }
+        response = client.post("/api/v1/products/", json=product_data, headers=auth_headers)
+        assert response.status_code == 201
+        assert response.json()["product_slug"] == "roll-up-sleeve-black"
+
+    def test_next_brand_slug_generation(self, auth_headers):
+        # Test Next direct conversion
+        product_data = {
+            "product_sku": 30006,
+            "brand_name": "Next",
+            "product_title": "Cold shoulder red dress",
+            "quantity": 10
+        }
+        response = client.post("/api/v1/products/", json=product_data, headers=auth_headers)
+        assert response.status_code == 201
+        assert response.json()["product_slug"] == "cold-shoulder-red-dress"
+
+    def test_global_4_token_rule(self, auth_headers):
+        # Test >4 tokens gets truncated
+        product_data = {
+            "product_sku": 30007,
+            "brand_name": "Tommy",
+            "product_title": "Rare max dress end white extra",  # 6 tokens
+            "quantity": 10
+        }
+        response = client.post("/api/v1/products/", json=product_data, headers=auth_headers)
+        assert response.status_code == 201
+        assert response.json()["product_slug"] == "rare-max-dress-end"  # First 4 tokens
+
+class TestAPIAuthentication:
+    def test_unauthenticated_requests(self):
+        # All product endpoints should require authentication
+        response = client.get("/api/v1/products/")
+        assert response.status_code == 403  # FastAPI returns 403 for missing auth
+        
+        response = client.get("/api/v1/products/1")
+        assert response.status_code == 403
+        
+        response = client.post("/api/v1/products/", json={})
+        assert response.status_code == 403
+        
+        response = client.delete("/api/v1/products/1")
+        assert response.status_code == 403
+
+class TestSystemEndpoints:
+    def test_health_check(self):
+        response = client.get("/api/v1/health")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["status"] == "healthy"
+
+    def test_root_endpoint(self):
+        response = client.get("/")
+        assert response.status_code == 200
+        data = response.json()
+        assert "Product Management API" in data["message"]

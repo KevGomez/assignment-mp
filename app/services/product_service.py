@@ -73,7 +73,7 @@ class ProductService:
     ) -> List[schemas.ProductListItem]:
         """List products - returns 10 products by default with only required fields"""
         products = crud.get_products(db, skip=skip, limit=limit, brand=brand, search=None)
-        return [schemas.ProductListItem.from_orm(product) for product in products]
+        return [schemas.ProductListItem.model_validate(product) for product in products]
     
     @staticmethod
     def get_product_by_id_direct(db: Session, product_id: int) -> schemas.Product:
@@ -81,7 +81,7 @@ class ProductService:
         db_product = crud.get_product(db, product_id=product_id)
         if db_product is None:
             raise HTTPException(status_code=404, detail="Product not found")
-        return schemas.Product.from_orm(db_product)
+        return schemas.Product.model_validate(db_product)
     
     @staticmethod
     def create_product_direct(db: Session, product: schemas.ProductCreate) -> schemas.Product:
