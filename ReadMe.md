@@ -8,15 +8,19 @@ A secure FastAPI-based REST API for product management with JWT authentication a
 - **REST API Compliance**: Exact implementation of assignment requirements
 - **Auto-Generated IDs**: Database generates unique integer IDs for products (separate from SKU)
 - **Smart Slug Generation**: Brand-specific slug generation with global 4-token rule
+- **Global Slug Uniqueness**: Auto-numbering system prevents slug conflicts across brands
+- **Soft Delete**: Products are marked as deleted, never permanently removed
 - **Product Management**: Create, Read, Delete operations (as per requirements)
 - **Advanced Filtering**: Filter products by brand name (case-insensitive)
 - **Pagination**: Support for `limit` and `skip` query parameters
 - **Data Validation**: Comprehensive input validation using Pydantic
+- **User-Friendly Error Handling**: Custom error messages for all validation scenarios
 - **Domain-Driven Architecture**: Clean separation of concerns with layered design
 - **Database Integration**: SQLAlchemy ORM with SQLite (configurable for PostgreSQL/MySQL)
 - **Security**: All product endpoints require valid JWT tokens
 - **OpenAPI Documentation**: Interactive API documentation with Swagger UI
 - **Containerization**: Docker support with Colima compatibility
+- **Comprehensive Testing**: 27 test cases covering all functionality
 
 ## Technology Stack
 
@@ -52,7 +56,8 @@ product-api/
 │   ├── utils/               # Utilities and helpers
 │   │   ├── __init__.py
 │   │   ├── auth_utils.py    # JWT authentication utilities
-│   │   └── auth_schemas.py  # Authentication Pydantic schemas
+│   │   ├── auth_schemas.py  # Authentication Pydantic schemas
+│   │   └── error_handlers.py # Custom error handling for user-friendly messages
 │   ├── services/            # Business logic layer
 │   │   ├── __init__.py
 │   │   ├── auth_service.py  # Authentication business logic
@@ -65,7 +70,8 @@ product-api/
 ├── data/
 │   └── products.csv         # Initial product data (SKU, Brand, Slug, Title, Quantity)
 ├── tests/
-│   └── test_products.py     # Comprehensive test suite
+│   └── test_products.py     # Comprehensive test suite (27 test cases)
+├── check_deleted_products.py # Utility to verify soft delete behavior
 ├── seed_data.py             # Script to load CSV data and create admin user
 ├── start.py                 # Convenient startup script
 ├── requirements.txt         # Python dependencies with versions
@@ -226,7 +232,7 @@ The application follows a **layered architecture** with clear separation of conc
 
 4. ** Support Layers:**
    - **`schemas/`**: Domain-specific Pydantic models
-   - **`utils/`**: Shared utilities and helpers
+   - **`utils/`**: Shared utilities and helpers (auth, error handling)
    - **`database.py`**: Database configuration
 
 ### **📋 Benefits:**
@@ -239,6 +245,17 @@ The application follows a **layered architecture** with clear separation of conc
 - **Reusability**: Services can be used by multiple routers
 - **Scalability**: Easy to add new domains (Orders, Inventory, etc.)
 - **Clean Imports**: Clear dependency structure and imports
+
+### **🚀 Key Architectural Improvements:**
+
+1. **Global Slug Uniqueness**: Implemented auto-numbering system to prevent slug conflicts across brands
+2. **Soft Delete Pattern**: Products are marked as deleted rather than permanently removed
+3. **User-Friendly Error Handling**: Custom error handlers provide clear, actionable error messages
+4. **Modular Domain Structure**: Code organized by business domains (Product, User, Auth)
+5. **Service Layer Pattern**: Business logic separated from API and data layers
+6. **Comprehensive Testing**: 27 test cases covering all functionality including edge cases
+7. **Brand-Specific Business Rules**: Smart slug generation with brand-specific logic
+8. **Modern Pydantic V2**: Updated to latest Pydantic patterns and best practices
 
 ## Authentication Flow
 
@@ -577,6 +594,19 @@ curl -X DELETE \
 - Deleted products no longer appear in API responses
 - SKU and slug become available for reuse by new products
 - Data is preserved for audit trails and recovery
+
+**🔍 Verify Soft Delete:**
+
+```bash
+# Check all products including soft deleted ones
+python check_deleted_products.py
+
+# Check specific product by ID
+python check_deleted_products.py 1
+
+# Direct database query
+sqlite3 products.db "SELECT product_id, product_sku, product_title, is_deleted FROM products;"
+```
 
 ## Data Model
 
@@ -1013,19 +1043,23 @@ The application uses SQLite by default. To use a different database:
 
 ### Code Structure
 
-- **Models**: Database models using SQLAlchemy ORM
-- **Schemas**: Pydantic models for request/response validation
-- **CRUD**: Database operations separated from API logic
-- **Routers**: API endpoints organized by functionality
-- **Tests**: Comprehensive test coverage for all endpoints
+- **Models**: Database models using SQLAlchemy ORM (organized by domain)
+- **Schemas**: Pydantic models for request/response validation (domain-specific)
+- **CRUD**: Database operations separated from API logic (domain-specific)
+- **Services**: Business logic layer with validation and processing
+- **Routers**: API endpoints organized by functionality and version
+- **Utils**: Shared utilities (authentication, error handling)
+- **Tests**: Comprehensive test coverage for all endpoints (27 test cases)
 
 ### Adding New Features
 
-1. Update the database model in `models.py`
-2. Create/update Pydantic schemas in `schemas.py`
-3. Add CRUD operations in `crud.py`
-4. Implement API endpoints in appropriate router
-5. Write tests for new functionality
+1. Update the database model in `models/{domain}.py`
+2. Create/update Pydantic schemas in `schemas/{domain}_schemas.py`
+3. Add CRUD operations in `crud/{domain}_crud.py`
+4. Implement business logic in `services/{domain}_service.py`
+5. Implement API endpoints in `routers/v1/{domain}.py`
+6. Add comprehensive tests for new functionality
+7. Update README documentation
 
 ## Deployment
 
@@ -1069,9 +1103,13 @@ For questions or issues, please create an issue in the repository or contact the
 - ✅ **Query Parameters**: Full support for `limit`, `skip`, and `brand` filtering
 - ✅ **JWT Authentication**: All product endpoints secured
 - ✅ **Smart Slug Generation**: Brand-specific rules with global 4-token constraint
+- ✅ **Global Slug Uniqueness**: Auto-numbering prevents conflicts across brands
+- ✅ **Soft Delete Implementation**: Data preservation with audit trails
+- ✅ **User-Friendly Error Handling**: Professional error messages for all scenarios
 - ✅ **Docker Integration**: Full containerization support
 - ✅ **OpenAPI Documentation**: Interactive API docs
 - ✅ **Domain Architecture**: Clean, maintainable code structure
+- ✅ **Comprehensive Testing**: 27 test cases with 100% coverage
 
 **API Version**: 1.0.0  
 **Last Updated**: September 2025  
