@@ -5,16 +5,16 @@ from ..models.product import Product
 from ..schemas.product_schemas import ProductCreate, ProductUpdate
 
 def get_product(db: Session, product_id: int):
-    return db.query(Product).filter(Product.product_id == product_id).first()
+    return db.query(Product).filter(Product.product_id == product_id, Product.is_deleted == False).first()
 
 def get_product_by_slug(db: Session, product_slug: str):
-    return db.query(Product).filter(Product.product_slug == product_slug).first()
+    return db.query(Product).filter(Product.product_slug == product_slug, Product.is_deleted == False).first()
 
 def get_product_by_sku(db: Session, product_sku: int):
-    return db.query(Product).filter(Product.product_sku == product_sku).first()
+    return db.query(Product).filter(Product.product_sku == product_sku, Product.is_deleted == False).first()
 
 def get_products(db: Session, skip: int = 0, limit: int = 100, brand: Optional[str] = None, search: Optional[str] = None):
-    query = db.query(Product)
+    query = db.query(Product).filter(Product.is_deleted == False)
     
     if brand:
         query = query.filter(Product.brand_name.ilike(f"%{brand}%"))
@@ -61,17 +61,18 @@ def update_product(db: Session, product_id: int, product_update: ProductUpdate):
     return db_product
 
 def delete_product(db: Session, product_id: int):
-    db_product = db.query(Product).filter(Product.product_id == product_id).first()
+    db_product = db.query(Product).filter(Product.product_id == product_id, Product.is_deleted == False).first()
     if db_product:
-        db.delete(db_product)
+        db_product.is_deleted = True
         db.commit()
+        db.refresh(db_product)
     return db_product
 
 def get_low_stock_products(db: Session, threshold: int = 10):
-    return db.query(Product).filter(Product.quantity <= threshold).all()
+    return db.query(Product).filter(Product.quantity <= threshold, Product.is_deleted == False).all()
 
 def update_stock(db: Session, product_id: int, new_quantity: int):
-    db_product = db.query(Product).filter(Product.product_id == product_id).first()
+    db_product = db.query(Product).filter(Product.product_id == product_id, Product.is_deleted == False).first()
     if db_product:
         db_product.quantity = new_quantity
         db.commit()

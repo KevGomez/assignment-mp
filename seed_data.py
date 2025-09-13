@@ -40,7 +40,8 @@ def load_products_from_csv():
                             brand_name=brand.strip(),
                             product_slug=slug.strip(),
                             product_title=title.strip(),
-                            quantity=int(quantity)
+                            quantity=int(quantity),
+                            is_deleted=False
                         )
                         db.add(product)
                         print(f"Added product: {title.strip()} (SKU: {sku})")

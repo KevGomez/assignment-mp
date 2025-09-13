@@ -378,36 +378,48 @@ curl -X POST "http://localhost:8000/api/v1/products/" \
 
 **🔒 Business Validation Rules:**
 
-- **SKU Uniqueness**: Each `product_sku` must be unique across all products
-- **Brand + Title Uniqueness**: Same brand cannot have duplicate product titles
-- **Case-Insensitive**: `"High Split Shirt"` = `"high split shirt"`
+- **SKU Uniqueness**: Each `product_sku` must be unique across all **active** products
+- **Global Slug Uniqueness**: Product slugs are globally unique across all brands with auto-numbering
+- **Soft Delete**: Products are never permanently deleted, only marked as `is_deleted = true`
 
 **Examples:**
 
 ```bash
-# ✅ ALLOWED: Different brands, same title
+# ✅ ALLOWED: Different brands, same title (auto-numbered slugs)
 POST {"product_sku": 1001, "brand_name": "Tommy", "product_title": "Red Shirt", "quantity": 10}
+# Result: product_slug = "red-solid-shirt"
+
 POST {"product_sku": 1002, "brand_name": "Shein", "product_title": "Red Shirt", "quantity": 15}
+# Result: product_slug = "red-solid-shirt-1" (auto-numbered)
+
+POST {"product_sku": 1003, "brand_name": "Next", "product_title": "Red Shirt", "quantity": 20}
+# Result: product_slug = "red-solid-shirt-2" (auto-numbered)
 
 # ✅ ALLOWED: Same brand, different titles
-POST {"product_sku": 1003, "brand_name": "Tommy", "product_title": "Red Shirt", "quantity": 10}
 POST {"product_sku": 1004, "brand_name": "Tommy", "product_title": "Blue Shirt", "quantity": 20}
+# Result: product_slug = "blue-solid-shirt" (unique base slug)
 
-# 🚫 BLOCKED: Same brand + same title
-POST {"product_sku": 1005, "brand_name": "Tommy", "product_title": "Red Shirt", "quantity": 10}
-POST {"product_sku": 1006, "brand_name": "Tommy", "product_title": "Red Shirt", "quantity": 25}
-# Error: "Product 'Red Shirt' already exists for brand 'Tommy'"
+# 🚫 BLOCKED: Only duplicate SKUs are prevented
+POST {"product_sku": 1001, "brand_name": "AnyBrand", "product_title": "Any Title", "quantity": 25}
+# Error: "Product with this SKU already exists"
 ```
 
-**🔧 Smart Brand-Specific Slug Generation:**
+**🔧 Smart Brand-Specific Slug Generation with Global Uniqueness:**
 
-The `product_slug` is automatically generated using **GLOBAL 4-TOKEN RULE** + **brand-specific rules**:
+The `product_slug` is automatically generated using **GLOBAL 4-TOKEN RULE** + **brand-specific rules** + **global uniqueness enforcement**:
 
-### **🌐 GLOBAL RULE: All slugs have exactly 4 tokens**
+### **🌐 GLOBAL RULES:**
 
-- **>4 tokens**: Truncate to first 4 tokens
-- **<4 tokens**: Apply brand-specific padding
-- **=4 tokens**: Apply brand-specific modifications
+1. **4-Token Rule**: All slugs have exactly 4 tokens
+
+   - **>4 tokens**: Truncate to first 4 tokens
+   - **<4 tokens**: Apply brand-specific padding
+   - **=4 tokens**: Apply brand-specific modifications
+
+2. **Global Uniqueness**: Slugs are unique across ALL brands
+   - **First occurrence**: Uses base slug (e.g., `"high-split-solid-shirt"`)
+   - **Duplicate detected**: Auto-numbered (e.g., `"high-split-solid-shirt-1"`, `"high-split-solid-shirt-2"`)
+   - **Cross-brand conflicts**: Handled automatically with numbering
 
 ### **🏷️ Brand Rules:**
 
@@ -438,6 +450,27 @@ The `product_slug` is automatically generated using **GLOBAL 4-TOKEN RULE** + **
 
 - Default: first 4 tokens with lowercase + hyphens
 
+### **🎯 Global Uniqueness Examples:**
+
+```bash
+# Example 1: Same title across different brands
+POST {"product_sku": 1001, "brand_name": "Tommy", "product_title": "High split shirt"}
+# Result: product_slug = "high-split-solid-shirt"
+
+POST {"product_sku": 1002, "brand_name": "Shein", "product_title": "High split shirt"}
+# Result: product_slug = "high-split-solid-shirt-1" (auto-numbered)
+
+POST {"product_sku": 1003, "brand_name": "Next", "product_title": "High split shirt"}
+# Result: product_slug = "high-split-solid-shirt-2" (auto-numbered)
+
+# Example 2: Different titles generating same base slug
+POST {"product_sku": 2001, "brand_name": "Tommy", "product_title": "Red solid shirt"}
+# Result: product_slug = "red-solid-shirt"
+
+POST {"product_sku": 2002, "brand_name": "Reiss", "product_title": "Red solid shirt"}
+# Result: product_slug = "red-solid-shirt-1" (auto-numbered)
+```
+
 Request Body:
 
 ```json
@@ -448,6 +481,8 @@ Request Body:
   "quantity": 50
 }
 ```
+
+**⚠️ All fields are required** - the API will return a validation error if any field is missing.
 
 Response:
 
@@ -528,13 +563,20 @@ curl -H "Authorization: Bearer YOUR_JWT_TOKEN" \
      "http://localhost:8000/api/v1/products/1"
 ```
 
-### 6. Delete Product (with JWT)
+### 6. Delete Product (with JWT) - Soft Delete
 
 ```bash
 curl -X DELETE \
      -H "Authorization: Bearer YOUR_JWT_TOKEN" \
      "http://localhost:8000/api/v1/products/1"
 ```
+
+**🔄 Soft Delete Behavior:**
+
+- Product is marked as `is_deleted = true` (not permanently removed)
+- Deleted products no longer appear in API responses
+- SKU and slug become available for reuse by new products
+- Data is preserved for audit trails and recovery
 
 ## Data Model
 
@@ -547,7 +589,8 @@ curl -X DELETE \
   "brand_name": "Tommy",
   "product_slug": "high-split-solid-shirt",
   "product_title": "High split shirt",
-  "quantity": 101
+  "quantity": 101,
+  "is_deleted": false
 }
 ```
 
@@ -614,11 +657,177 @@ curl -X DELETE \
 204 No Content
 ```
 
+## Error Handling
+
+The API provides **user-friendly error messages** with consistent formatting for all validation and business logic errors.
+
+### Error Response Format
+
+All errors follow a consistent JSON structure:
+
+```json
+{
+  "error": "Error Type",
+  "message": "Human-readable description",
+  "details": [
+    {
+      "field": "field_name",
+      "message": "Specific error description",
+      "received_value": "invalid_value"
+    }
+  ]
+}
+```
+
+### Common Error Scenarios
+
+#### **1. Validation Errors (422 Unprocessable Entity)**
+
+**Invalid Data Type:**
+
+```bash
+# Request with invalid product_sku
+POST /api/v1/products/
+{
+  "product_sku": "invalid_text",
+  "brand_name": "Tommy",
+  "product_title": "Test Product",
+  "quantity": 10
+}
+```
+
+**Response:**
+
+```json
+{
+  "error": "Validation Error",
+  "message": "The request contains invalid data. Please check the fields below and try again.",
+  "details": [
+    {
+      "field": "product_sku",
+      "message": "Field 'product_sku' must be a valid integer, received: 'invalid_text'",
+      "received_value": "invalid_text"
+    }
+  ]
+}
+```
+
+**Missing Required Fields:**
+
+```bash
+# Request missing required fields
+POST /api/v1/products/
+{
+  "product_sku": 12345
+  // Missing brand_name, product_title, quantity
+}
+```
+
+**Response:**
+
+```json
+{
+  "error": "Validation Error",
+  "message": "The request contains invalid data. Please check the fields below and try again.",
+  "details": [
+    {
+      "field": "brand_name",
+      "message": "Field 'brand_name' is required but was not provided",
+      "received_value": null
+    },
+    {
+      "field": "product_title",
+      "message": "Field 'product_title' is required but was not provided",
+      "received_value": null
+    },
+    {
+      "field": "quantity",
+      "message": "Field 'quantity' is required but was not provided",
+      "received_value": null
+    }
+  ]
+}
+```
+
+#### **2. Business Logic Errors (400 Bad Request)**
+
+**Duplicate SKU:**
+
+```json
+{
+  "error": "Bad Request",
+  "message": "Product with this SKU already exists",
+  "status_code": 400
+}
+```
+
+#### **3. Authentication Errors (403 Forbidden)**
+
+**Missing JWT Token:**
+
+```json
+{
+  "error": "Forbidden",
+  "message": "Not authenticated",
+  "status_code": 403
+}
+```
+
+**Invalid JWT Token:**
+
+```json
+{
+  "error": "Forbidden",
+  "message": "Could not validate credentials",
+  "status_code": 403
+}
+```
+
+#### **4. Resource Not Found (404 Not Found)**
+
+**Product Not Found:**
+
+```json
+{
+  "error": "Not Found",
+  "message": "Product not found",
+  "status_code": 404
+}
+```
+
+### Error Testing
+
+The API includes comprehensive error handling tests covering:
+
+- ✅ **Invalid data types** (string instead of integer)
+- ✅ **Missing required fields**
+- ✅ **Multiple validation errors** in single request
+- ✅ **Business logic violations** (duplicate SKU/title)
+- ✅ **Authentication failures**
+- ✅ **Resource not found scenarios**
+
+**Test the error handling:**
+
+```bash
+# Test validation error
+curl -X POST "http://localhost:8000/api/v1/products/" \
+     -H "Authorization: Bearer YOUR_TOKEN" \
+     -H "Content-Type: application/json" \
+     -d '{"product_sku": "invalid", "brand_name": "Test"}'
+
+# Test missing authentication
+curl -X GET "http://localhost:8000/api/v1/products/"
+
+# Test non-existent product
+curl -X GET "http://localhost:8000/api/v1/products/99999" \
+     -H "Authorization: Bearer YOUR_TOKEN"
+```
+
 ## Testing
 
 ### Comprehensive Test Suite
 
-The project includes a **comprehensive test suite** covering all API functionality, business logic, and edge cases with **22 test cases** organized into focused test classes.
+The project includes a **comprehensive test suite** covering all API functionality, business logic, and edge cases with **27 test cases** organized into focused test classes.
 
 ### Test Coverage
 
@@ -628,19 +837,21 @@ The project includes a **comprehensive test suite** covering all API functionali
 - ✅ JWT token generation and login flow
 - ✅ Invalid credentials handling
 
-#### **📊 Product API Tests (11 tests)**
+#### **📊 Product API Tests (13 tests)**
 
 - ✅ Product creation with auto-generated slugs
 - ✅ Business validation (duplicate SKU prevention)
-- ✅ Business validation (duplicate brand+title prevention)
-- ✅ Cross-brand product creation (same title, different brands)
+- ✅ **Global slug uniqueness with auto-numbering** (NEW)
+- ✅ Cross-brand product creation (same title with auto-numbered slugs)
+- ✅ **Cross-brand slug conflict resolution** (NEW)
 - ✅ Product listing with default pagination (10 items)
 - ✅ Advanced pagination (`skip`, `limit` parameters)
 - ✅ Brand filtering (case-insensitive, partial matching)
 - ✅ Single product retrieval by ID
-- ✅ Product deletion with 204 status code
+- ✅ **Soft delete with 204 status code** (NEW)
 - ✅ 404 handling for non-existent products
 - ✅ 404 verification after product deletion
+- ✅ **Comprehensive soft delete behavior testing** (NEW)
 
 #### **🏷️ Smart Slug Generation Tests (5 tests)**
 
@@ -653,6 +864,12 @@ The project includes a **comprehensive test suite** covering all API functionali
 #### **🔒 Security Tests (1 test)**
 
 - ✅ Unauthenticated request blocking (403 Forbidden)
+
+#### **🚨 Error Handling Tests (3 tests)**
+
+- ✅ **Invalid data types**: String instead of integer validation
+- ✅ **Missing required fields**: Comprehensive field validation
+- ✅ **Multiple validation errors**: Complex error scenario handling
 
 #### **⚙️ System Tests (2 tests)**
 
@@ -704,7 +921,7 @@ $ python -m pytest tests/ -v
 
 ======================================== test session starts =========================================
 platform darwin -- Python 3.10.14, pytest-8.3.4, pluggy-1.6.0
-collected 22 items
+collected 27 items
 
 tests/test_products.py::TestAuthentication::test_register_user PASSED                          [  4%]
 tests/test_products.py::TestAuthentication::test_login_user PASSED                             [  9%]
@@ -725,11 +942,14 @@ tests/test_products.py::TestSlugGeneration::test_shein_brand_slug_generation PAS
 tests/test_products.py::TestSlugGeneration::test_reiss_brand_slug_generation PASSED            [ 77%]
 tests/test_products.py::TestSlugGeneration::test_next_brand_slug_generation PASSED             [ 81%]
 tests/test_products.py::TestSlugGeneration::test_global_4_token_rule PASSED                    [ 86%]
-tests/test_products.py::TestAPIAuthentication::test_unauthenticated_requests PASSED            [ 90%]
-tests/test_products.py::TestSystemEndpoints::test_health_check PASSED                          [ 95%]
+tests/test_products.py::TestAPIAuthentication::test_unauthenticated_requests PASSED            [ 84%]
+tests/test_products.py::TestErrorHandling::test_validation_error_invalid_integer PASSED        [ 88%]
+tests/test_products.py::TestErrorHandling::test_validation_error_missing_required_field PASSED [ 92%]
+tests/test_products.py::TestErrorHandling::test_validation_error_invalid_data_types PASSED     [ 96%]
+tests/test_products.py::TestSystemEndpoints::test_health_check PASSED                          [ 98%]
 tests/test_products.py::TestSystemEndpoints::test_root_endpoint PASSED                         [100%]
 
-============================= 22 passed, 0 failed in 7.60s ===============================
+============================= 27 passed, 0 failed in 8.80s ===============================
 ```
 
 ### Test Quality Features
@@ -743,9 +963,9 @@ tests/test_products.py::TestSystemEndpoints::test_root_endpoint PASSED          
 
 #### **🛡️ Robust Business Logic Testing**
 
-- ✅ **SKU Uniqueness**: Prevents duplicate product SKUs
-- ✅ **Brand+Title Uniqueness**: Prevents duplicate products within same brand
-- ✅ **Case-Insensitive Validation**: "Red Shirt" = "red shirt" = "RED SHIRT"
+- ✅ **SKU Uniqueness**: Prevents duplicate product SKUs among active products
+- ✅ **Global Slug Uniqueness**: Auto-numbering prevents slug conflicts
+- ✅ **Soft Delete Validation**: SKU/slug reuse after deletion
 - ✅ **Cross-Brand Flexibility**: Same title allowed across different brands
 
 #### **🎯 Brand-Specific Slug Testing**

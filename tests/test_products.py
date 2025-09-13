@@ -114,32 +114,108 @@ class TestProductAPI:
         duplicate_data["product_title"] = "Different title"
         response = client.post("/api/v1/products/", json=duplicate_data, headers=auth_headers)
         assert response.status_code == 400
-        assert "Product with this SKU already exists" in response.json()["detail"]
+        assert "Product with this SKU already exists" in response.json()["message"]
 
-    def test_create_product_duplicate_brand_title(self, auth_headers, sample_product_data):
-        # Create first product
-        client.post("/api/v1/products/", json=sample_product_data, headers=auth_headers)
+    def test_create_product_duplicate_slug_auto_numbering(self, auth_headers):
+        # Create first product - use a title that generates same base slug across brands
+        first_product = {
+            "product_sku": 50001,
+            "brand_name": "Next",  # Next uses direct conversion (no special rules)
+            "product_title": "Cold shoulder red dress",  # Generates: cold-shoulder-red-dress
+            "quantity": 10
+        }
+        response1 = client.post("/api/v1/products/", json=first_product, headers=auth_headers)
+        assert response1.status_code == 201
+        base_slug = response1.json()["product_slug"]
+        assert base_slug == "cold-shoulder-red-dress"
         
-        # Try to create with same brand + title but different SKU
-        duplicate_data = sample_product_data.copy()
-        duplicate_data["product_sku"] = 99999
-        response = client.post("/api/v1/products/", json=duplicate_data, headers=auth_headers)
-        assert response.status_code == 400
-        assert "already exists for brand" in response.json()["detail"]
+        # Create second product with same exact title and brand - should get auto-numbered slug
+        second_product = {
+            "product_sku": 50002,
+            "brand_name": "Next",  # Same brand, same title
+            "product_title": "Cold shoulder red dress",  # Same title
+            "quantity": 15
+        }
+        response2 = client.post("/api/v1/products/", json=second_product, headers=auth_headers)
+        assert response2.status_code == 201
+        # Should get auto-numbered slug since base slug already exists
+        assert response2.json()["product_slug"] == f"{base_slug}-1"
+        
+        # Create third product with same title - should get -2
+        third_product = {
+            "product_sku": 50003,
+            "brand_name": "Next",  # Same brand again
+            "product_title": "Cold shoulder red dress",  # Same title
+            "quantity": 20
+        }
+        response3 = client.post("/api/v1/products/", json=third_product, headers=auth_headers)
+        assert response3.status_code == 201
+        assert response3.json()["product_slug"] == f"{base_slug}-2"
 
-    def test_create_product_same_title_different_brand(self, auth_headers, sample_product_data):
-        # Create first product
-        client.post("/api/v1/products/", json=sample_product_data, headers=auth_headers)
+    def test_create_product_same_title_different_brand(self, auth_headers):
+        # Test cross-brand slug behavior - different brands may generate different base slugs
+        # Create first product with Next brand (simple conversion)
+        first_product = {
+            "product_sku": 60001,
+            "brand_name": "Next",
+            "product_title": "Simple red dress",  # Generates: simple-red-dress
+            "quantity": 10
+        }
+        response1 = client.post("/api/v1/products/", json=first_product, headers=auth_headers)
+        assert response1.status_code == 201
+        first_slug = response1.json()["product_slug"]
         
-        # Create with same title but different brand (should be allowed)
-        different_brand_data = {
-            "product_sku": 99999,
-            "brand_name": "Shein",
-            "product_title": "High split shirt",
+        # Create second product with same title but different brand
+        second_product = {
+            "product_sku": 60002,
+            "brand_name": "Tommy",  # Different brand - may generate different base slug
+            "product_title": "Simple red dress",
             "quantity": 25
         }
-        response = client.post("/api/v1/products/", json=different_brand_data, headers=auth_headers)
-        assert response.status_code == 201
+        response2 = client.post("/api/v1/products/", json=second_product, headers=auth_headers)
+        assert response2.status_code == 201
+        second_slug = response2.json()["product_slug"]
+        
+        # Both products should be created successfully
+        assert response1.status_code == 201
+        assert response2.status_code == 201
+        
+        # Slugs should be different (either different base slugs or auto-numbered)
+        assert first_slug != second_slug
+    
+    def test_global_slug_uniqueness_cross_brand(self, auth_headers):
+        # Test that when different brands generate the same base slug, auto-numbering works
+        # Use a generic title that should generate similar slugs across brands
+        
+        # Create first product
+        first_product = {
+            "product_sku": 70001,
+            "brand_name": "TestBrand1",  # Unknown brand - uses default rules
+            "product_title": "Red blue green yellow",  # 4 tokens, should be: red-blue-green-yellow
+            "quantity": 10
+        }
+        response1 = client.post("/api/v1/products/", json=first_product, headers=auth_headers)
+        assert response1.status_code == 201
+        base_slug = response1.json()["product_slug"]
+        
+        # Create second product with different brand but same title
+        second_product = {
+            "product_sku": 70002,
+            "brand_name": "TestBrand2",  # Different unknown brand - should generate same base slug
+            "product_title": "Red blue green yellow",  # Same 4 tokens
+            "quantity": 15
+        }
+        response2 = client.post("/api/v1/products/", json=second_product, headers=auth_headers)
+        assert response2.status_code == 201
+        second_slug = response2.json()["product_slug"]
+        
+        # Should get auto-numbered slug if base slugs are the same
+        if base_slug == "red-blue-green-yellow":
+            # If both brands generate the same base slug, second should be auto-numbered
+            assert second_slug == f"{base_slug}-1"
+        else:
+            # If brands generate different base slugs, both should be unique
+            assert second_slug != base_slug
 
     def test_list_products_default(self, auth_headers, sample_product_data):
         # Create a product first
@@ -247,17 +323,64 @@ class TestProductAPI:
         create_response = client.post("/api/v1/products/", json=sample_product_data, headers=auth_headers)
         product_id = create_response.json()["product_id"]
         
-        # Delete product
+        # Delete product (soft delete)
         response = client.delete(f"/api/v1/products/{product_id}", headers=auth_headers)
         assert response.status_code == 204
         
-        # Verify product is deleted (should return 404)
+        # Verify product is soft deleted (should return 404 for API calls)
         response = client.get(f"/api/v1/products/{product_id}", headers=auth_headers)
         assert response.status_code == 404
 
     def test_delete_nonexistent_product(self, auth_headers):
         response = client.delete("/api/v1/products/99999", headers=auth_headers)
         assert response.status_code == 404
+    
+    def test_soft_delete_behavior(self, auth_headers):
+        # Test comprehensive soft delete behavior
+        
+        # Create a product
+        product_data = {
+            "product_sku": 80001,
+            "brand_name": "SoftDeleteTest",
+            "product_title": "Test soft delete product",
+            "quantity": 50
+        }
+        create_response = client.post("/api/v1/products/", json=product_data, headers=auth_headers)
+        assert create_response.status_code == 201
+        product_id = create_response.json()["product_id"]
+        product_sku = create_response.json()["product_sku"]
+        
+        # Verify product exists in listing
+        list_response = client.get("/api/v1/products/", headers=auth_headers)
+        assert list_response.status_code == 200
+        product_ids = [p["product_id"] for p in list_response.json()]
+        assert product_id in product_ids
+        
+        # Soft delete the product
+        delete_response = client.delete(f"/api/v1/products/{product_id}", headers=auth_headers)
+        assert delete_response.status_code == 204
+        
+        # Verify product no longer appears in API responses
+        # 1. Get single product should return 404
+        get_response = client.get(f"/api/v1/products/{product_id}", headers=auth_headers)
+        assert get_response.status_code == 404
+        
+        # 2. Product should not appear in listing
+        list_response = client.get("/api/v1/products/", headers=auth_headers)
+        assert list_response.status_code == 200
+        product_ids = [p["product_id"] for p in list_response.json()]
+        assert product_id not in product_ids
+        
+        # 3. Should be able to create new product with same SKU (since old one is soft deleted)
+        new_product_data = {
+            "product_sku": product_sku,  # Same SKU as deleted product
+            "brand_name": "NewBrand",
+            "product_title": "New product with recycled SKU",
+            "quantity": 25
+        }
+        new_create_response = client.post("/api/v1/products/", json=new_product_data, headers=auth_headers)
+        assert new_create_response.status_code == 201
+        assert new_create_response.json()["product_sku"] == product_sku
 
 class TestSlugGeneration:
     def test_tommy_brand_slug_generation(self, auth_headers):
@@ -356,6 +479,71 @@ class TestAPIAuthentication:
         
         response = client.delete("/api/v1/products/1")
         assert response.status_code == 403
+
+class TestErrorHandling:
+    def test_validation_error_invalid_integer(self, auth_headers):
+        # Test invalid integer for product_sku
+        invalid_product = {
+            "product_sku": "invalid_integer",  # Should be integer
+            "brand_name": "TestBrand",
+            "product_title": "Test Product",
+            "quantity": 10
+        }
+        
+        response = client.post("/api/v1/products/", json=invalid_product, headers=auth_headers)
+        assert response.status_code == 422
+        
+        error_data = response.json()
+        assert error_data["error"] == "Validation Error"
+        assert "invalid data" in error_data["message"].lower()
+        assert len(error_data["details"]) > 0
+        
+        # Check that the error details are user-friendly
+        detail = error_data["details"][0]
+        assert "product_sku" in detail["field"]
+        assert "integer" in detail["message"].lower()
+        assert detail["received_value"] == "invalid_integer"
+    
+    def test_validation_error_missing_required_field(self, auth_headers):
+        # Test missing required field
+        incomplete_product = {
+            "product_sku": 12345,
+            "brand_name": "TestBrand",
+            # Missing product_title and quantity
+        }
+        
+        response = client.post("/api/v1/products/", json=incomplete_product, headers=auth_headers)
+        assert response.status_code == 422
+        
+        error_data = response.json()
+        assert error_data["error"] == "Validation Error"
+        assert len(error_data["details"]) >= 1  # At least one missing field
+        
+        # Check for missing field error
+        field_names = [detail["field"] for detail in error_data["details"]]
+        assert any("product_title" in field for field in field_names)
+    
+    def test_validation_error_invalid_data_types(self, auth_headers):
+        # Test multiple invalid data types
+        invalid_product = {
+            "product_sku": "not_an_integer",
+            "brand_name": 12345,  # Should be string
+            "product_title": ["not", "a", "string"],  # Should be string
+            "quantity": "not_an_integer"
+        }
+        
+        response = client.post("/api/v1/products/", json=invalid_product, headers=auth_headers)
+        assert response.status_code == 422
+        
+        error_data = response.json()
+        assert error_data["error"] == "Validation Error"
+        assert len(error_data["details"]) >= 2  # Multiple validation errors
+        
+        # Verify user-friendly error messages
+        for detail in error_data["details"]:
+            assert "field" in detail
+            assert "message" in detail
+            assert len(detail["message"]) > 10  # Should be descriptive
 
 class TestSystemEndpoints:
     def test_health_check(self):

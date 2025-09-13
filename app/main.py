@@ -1,7 +1,9 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.exceptions import RequestValidationError
 from .database import engine, Base
 from .routers.v1 import products, auth
+from .utils.error_handlers import validation_exception_handler, http_exception_handler
 import uvicorn
 
 Base.metadata.create_all(bind=engine)
@@ -13,6 +15,10 @@ app = FastAPI(
     docs_url="/api/v1/docs",
     redoc_url="/api/v1/redoc"
 )
+
+# Register custom error handlers for user-friendly error messages
+app.add_exception_handler(RequestValidationError, validation_exception_handler)
+app.add_exception_handler(HTTPException, http_exception_handler)
 
 app.add_middleware(
     CORSMiddleware,

@@ -7,12 +7,13 @@ class ProductBase(BaseModel):
     product_slug: str
     product_title: str
     quantity: int = 0
+    is_deleted: bool = False
 
 class ProductCreate(BaseModel):
     product_sku: int
     brand_name: str
     product_title: str
-    quantity: int = 0
+    quantity: int
 
 class ProductUpdate(BaseModel):
     product_sku: Optional[int] = None
@@ -20,6 +21,7 @@ class ProductUpdate(BaseModel):
     product_slug: Optional[str] = None
     product_title: Optional[str] = None
     quantity: Optional[int] = None
+    is_deleted: Optional[bool] = None
 
 class Product(ProductBase):
     product_id: int

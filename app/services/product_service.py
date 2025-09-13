@@ -65,6 +65,39 @@ class ProductService:
         return slug
     
     @staticmethod
+    def _ensure_unique_slug(db: Session, base_slug: str) -> str:
+        """
+        Ensure global slug uniqueness by adding auto-numbering (-1, -2, etc.) when duplicates exist.
+        
+        Args:
+            db: Database session
+            base_slug: The base slug generated from brand-specific rules
+            
+        Returns:
+            Unique slug (either base_slug or base_slug-N where N is a number)
+        """
+        # Check if base slug is available
+        existing_product = crud.get_product_by_slug(db, product_slug=base_slug)
+        if not existing_product:
+            return base_slug
+        
+        # Base slug exists, find the next available numbered version
+        counter = 1
+        while True:
+            numbered_slug = f"{base_slug}-{counter}"
+            existing_product = crud.get_product_by_slug(db, product_slug=numbered_slug)
+            if not existing_product:
+                return numbered_slug
+            counter += 1
+            
+            # Safety check to prevent infinite loop (though highly unlikely)
+            if counter > 1000:
+                # Fallback to timestamp-based slug
+                import time
+                timestamp_slug = f"{base_slug}-{int(time.time())}"
+                return timestamp_slug
+    
+    @staticmethod
     def get_products_list(
         db: Session, 
         skip: int = 0, 
@@ -92,29 +125,14 @@ class ProductService:
             raise HTTPException(status_code=400, detail="Product with this SKU already exists")
         
         # Generate slug from title using brand-specific rules
-        slug = ProductService._generate_brand_specific_slug(product.brand_name, product.product_title)
+        base_slug = ProductService._generate_brand_specific_slug(product.brand_name, product.product_title)
         
         # Ensure slug is not empty
-        if not slug:
-            slug = f"product-{product.product_sku}"
+        if not base_slug:
+            base_slug = f"product-{product.product_sku}"
         
-        # Business validation: Check if same brand + title combination exists
-        existing_products = crud.get_products(db, skip=0, limit=1000, brand=product.brand_name, search=None)
-        for existing_product in existing_products:
-            if (existing_product.brand_name.lower() == product.brand_name.lower() and 
-                existing_product.product_title.lower() == product.product_title.lower()):
-                raise HTTPException(
-                    status_code=400, 
-                    detail=f"Product '{product.product_title}' already exists for brand '{product.brand_name}'. Use a different title or update the existing product."
-                )
-        
-        # Check for duplicate slug (should not happen with business validation above, but safety check)
-        db_product_slug = crud.get_product_by_slug(db, product_slug=slug)
-        if db_product_slug:
-            raise HTTPException(
-                status_code=400, 
-                detail="Product slug conflict detected. Please use a different product title."
-            )
+        # Implement global slug uniqueness with auto-numbering
+        slug = ProductService._ensure_unique_slug(db, base_slug)
         
         # Create full product data
         full_product_data = schemas.ProductBase(
@@ -122,11 +140,12 @@ class ProductService:
             brand_name=product.brand_name,
             product_slug=slug,
             product_title=product.product_title,
-            quantity=product.quantity
+            quantity=product.quantity,
+            is_deleted=False
         )
         
         created_product = crud.create_product(db=db, product=full_product_data)
-        return schemas.Product.from_orm(created_product)
+        return schemas.Product.model_validate(created_product)
     
     @staticmethod
     def delete_product_direct(db: Session, product_id: int) -> None:
